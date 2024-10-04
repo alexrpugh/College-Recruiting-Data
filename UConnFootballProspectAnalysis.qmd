@@ -1,0 +1,472 @@
+---
+title: "UConn Football Prospect Analysis"
+author: "Alex Pugh"
+format:
+  html:
+    code-fold: true
+    embed-resources: true
+execute:
+  warning: false
+  error: false
+jupyter: python3
+---
+
+# Introduction
+
+This data analysis focuses on the combine test scores of high school 
+football athletes. Using data from the National Combine, this paper 
+will try to unveal which combine tests have the best predictive power
+for forecasting player performance at the next level. Given that 600 
+athletes attend this combine annually, scouts and general managers at
+the collegiate level require an efficient process to evaluate each player.
+Discovering which metrics translate most effectively to the college game
+will greatly aid talent recruiters with the team building process. 
+For the purpose of this analysis, physical measurements will not be
+utilized. Instead, speed, agility, and explosion metrics will be utilized.
+
+# Specific Aims
+
+My main goals in exploring this data set are to answer the following
+research questions:
+
+- Is it possible to predict the success of a college player based on the combine scores in high school?
+- Which combine testing metrics should talent evaluators focus on during the recruitment process?
+- Are there any positions whose test scores matter more than others?
+
+Answering these inqueries will reveal pertinent information about evaluating high school athletes. 
+These findings may aid coaches, general managers, and scouts in their college recruitment process.
+
+# Data Description
+
+The National Combine testing data was collected from Zybeck Sports. 
+This dataset contains nine years of test scores ranging from 2016-2024. 
+The variables of significant interest are as follows: `Position`, `10`, `20`, 
+`40`, `5_10_5_10`, `5_10_5_20`, `3_Cone`, `VJ_Max`, `VJ_VJ`, and `Broad Jump`. 
+There were three seperate columns for player position in the original 
+dataset, often containing conflicting positions for the same players.
+Best judgement was used in these cases, inspecting both height and weight as 
+the best indicators.
+
+The meanings behind the other variables of significant interest are as follows:
+
+- `10`: Time required for a player to run the first 10 yards of a 40-yard dash (in seconds)
+- `20`: Time required for a player to run the first 20 yards of a 40-yard dash (in seconds)
+- `40`: Time required for a player to run a 40-yard dash (in seconds)
+- `5_10_5_10`: Time required for a player to complete half of the 20-yard shuttle (in seconds)
+- `5_10_5_20`: Time required for a player to complete the 20-yard shuttle (in seconds)
+- `3_Cone`: Time required for a player to complete the 3-cone drill (in seconds)
+- `VJ_Max`: Total distance jumped for three attempts at the vertical jump (in inches)
+- `VJ_VJ`: Average vertical jump distance from three attempts (in inches)
+- `Broad Jump`: Distance jumped during broad jump (in inches)
+
+In attempt to define a successful player (this will be disucced in the following 
+section in detail), data from Division I football conferences are incorporated
+into the dataset. This included data solely contains player names and positions.
+
+```{python}
+import pandas as pd
+import numpy as np
+
+combine = pd.read_csv("data/ZBK Data - National Combine.csv")
+NFL = pd.read_csv("/Users/alexpugh/UConn 2024 Spring/Football/data/NationalAndNFLCombinePlayers.csv")
+All_Conference = pd.read_csv("data/Combine_All_Conference.csv")
+
+All_Conference.rename(columns={'Name': 'Full Name'}, inplace=True)
+
+combine.drop(columns=['Unnamed: 25', 'Unnamed: 26', 'Unnamed: 27', 'Unnamed: 28', 'Unnamed: 29'], inplace=True)
+
+merged_df = pd.concat([All_Conference, NFL], ignore_index=True)
+merged_df['Success'] = True
+merged_df
+
+# Identify rows where "Name" is NaN and "Full Name" is not NaN
+mask_name_nan = merged_df["Name"].isna() & ~merged_df["Full Name"].isna()
+
+# Swap values between "Name" and "Full Name" columns
+merged_df.loc[mask_name_nan, "Name"] = merged_df.loc[mask_name_nan, "Full Name"]
+
+# Identify rows where "Full Name" is NaN and "Name" is not NaN
+mask_full_name_nan = merged_df["Full Name"].isna() & ~merged_df["Name"].isna()
+
+# Swap values between "Name" and "Full Name" columns
+merged_df.loc[mask_full_name_nan, "Full Name"] = merged_df.loc[mask_full_name_nan, "Name"]
+
+merged_df.drop("Full Name", axis=1, inplace=True)
+```
+
+In order to determine whether a player's career was successful post high school, 
+two different criteria were used. A player either had to of been invited to the 
+NFL combine between 1987 and 2023 or have been selected to an All-Conference team 
+between 2019 and 2023. In order to keep consistent with Division I teams with
+comparable success as UConn, only the following conferences' postseason awards 
+were considered:
+
+- Metro-Atlantic Conference
+- Sun Belt Conference
+- Conference USA
+- Mountain West Conference
+
+If a player appeared in either of these four conferences' awards within this five
+year window or was invited to the combine, then they were deemed to have been
+successful. All other players were considered to not have been successful.
+
+```{python}
+combine['Success'] = False
+columns_to_keep = combine.columns
+merged_df = merged_df[columns_to_keep]
+merged_df = merged_df[[col for col in merged_df.columns if col != 'Success'] + ['Success']]
+
+# Define a function to check if two rows are similar based on a threshold
+def are_rows_similar(row1, row2, threshold=0.5):
+    num_columns = len(row1)
+    num_matching_columns = np.sum(row1 == row2)
+    similarity_ratio = num_matching_columns / num_columns
+    return similarity_ratio >= threshold
+
+# Drop the 'Success' column for comparison
+merged_df_no_success = merged_df.drop(columns=['Success'])
+combine_no_success = combine.drop(columns=['Success'])
+
+# Create a list to store indices of duplicate rows
+duplicate_indices = []
+
+# Iterate through rows in combine DataFrame
+for idx_combine, row_combine in combine_no_success.iterrows():
+    # Iterate through rows in merged_df DataFrame
+    for idx_merged, row_merged in merged_df_no_success.iterrows():
+        # Check if the rows are similar based on the threshold
+        if are_rows_similar(row_combine.values, row_merged.values):
+            # If similar, add the index to the list of duplicate indices
+            duplicate_indices.append(idx_combine)
+            break  # Break out of the inner loop to avoid duplicates
+
+# Update the 'Success' column in combine DataFrame where duplicates are found
+combine['Success'] = combine.index.isin(duplicate_indices)
+
+# Reorder the columns with 'Success' as the last column
+combine = combine[[col for col in combine.columns if col != 'Success'] + ['Success']]
+```
+
+In order to have a sufficient sample size within each position of successful
+and unsuccessful players, positions had to be consolidated. All linebackers,
+defensive backs, offensive linemen, and defensive linemen were mapped to these
+generalized positions, regardless of their assignments within these groups.
+The counts of players within each position groupping is as follows:
+
+```{python}
+# Define the mapping dictionary
+position_mapping = {
+    'ILB': 'LB',
+    'Lb': 'LB',
+    'RB/WR': 'RB',
+    'DE/OLB': 'LB',
+    'Safety': 'DB',
+    'Wide Receiver': 'WR',
+    'OG': 'OL',
+    'OT': 'OL',
+    'OLB': 'LB',
+    'Quarter Back': 'QB',
+    'RT': 'OL',
+    'KR': 'RS',
+    '0': 'RS',
+    'DT': 'DL',
+    'DE': 'DL'
+}
+
+combine['Position'] = combine['Position'].str.strip()
+
+# Map the positions in the DataFrame
+combine['Position'] = combine['Position'].map(position_mapping).fillna(combine['Position'])
+
+# Check the updated value counts
+print(combine['Position'].value_counts())
+```
+
+Because athlete is an ill-defined position and lacking in sample
+size, players defined at this position were dropped. Special teams
+players of return specialist and kicker/long snapper were also dropped
+due to their insufficient sample size.
+
+```{python}
+pd.set_option('display.max_columns', None)
+columns_to_keep = ['Event Date', 'Position', '10', '20', '40', '5_10_5_10', '5_10_5_20', '3_Cone', 'VJ_Max', 'VJ_VJ', 'Broad Jump', '40 P', 'VJ_P', 'BJ_P', 'Shuttle_P', 'Total P', 'PI Grade', 'Name', 'Success']
+combine = combine[columns_to_keep]
+
+positions_to_drop = ['ATH', 'RS', 'K/LS']
+
+# Filter out rows with positions to drop
+combine = combine[~combine['Position'].isin(positions_to_drop)]
+```
+
+```{python}
+successful_players = combine[combine["Success"] == True]
+unsuccessful_players = combine[combine["Success"] == False]
+```
+
+```{python}
+speed_columns = ['10', '20', '40']
+agility_columns = ['5_10_5_10', '5_10_5_20', '3_Cone'] 
+jumping_columns = ['VJ_Max', 'VJ_VJ', 'Broad Jump']
+numeric_columns = speed_columns + agility_columns + jumping_columns
+
+# Define the columns that need to be converted to float
+columns_to_convert = ['5_10_5_10', '5_10_5_20', '3_Cone', 'Broad Jump']
+
+# Convert the columns to float64 and drop non-convertible values
+for column in columns_to_convert:
+    combine[column] = pd.to_numeric(combine[column], errors='coerce')
+
+# Drop rows with NaN values after conversion
+combine = combine.dropna(subset=columns_to_convert)
+```
+
+# Research Methods
+
+In order to get a clear picture of each metric, the average value 
+of each metric was computed for each position.
+
+```{python}
+import matplotlib.pyplot as plt
+import numpy as np
+
+# Calculate the average for each unique position
+numeric_columns_avg = combine.groupby('Position')[numeric_columns].mean()
+
+# Determine grid dimensions
+num_rows = 3
+num_cols = 3
+
+# Create subplots
+fig, axes = plt.subplots(num_rows, num_cols, figsize=(8, 8))
+
+# Define a colormap
+colors = plt.cm.tab10(np.linspace(0, 1, len(numeric_columns)))
+
+# Plotting each numeric column in a separate subplot
+for i, (column, color) in enumerate(zip(numeric_columns, colors)):
+    row = i // num_cols
+    col = i % num_cols
+    ax = axes[row, col]
+    numeric_columns_avg[[column]].plot(kind='bar', ax=ax, legend=False, color=color)
+    ax.set_title(f'Avg {column} by Pos')
+    ax.set_xlabel('Position')
+    ax.set_ylabel('Average Value')
+    ax.tick_params(axis='x', rotation=45)
+    ax.grid(axis='y', linestyle='--', alpha=0.7)
+
+# Adjust layout
+plt.tight_layout()
+plt.show()
+```
+
+| Position |      10    |      20    |      40    | 5_10_5_10 | 5_10_5_20 |   3_Cone  |   VJ_Max  |   VJ_VJ   | Broad Jump |
+|----------|------------|------------|------------|-----------|-----------|-----------|-----------|-----------|------------|
+|    DB    |  1.768603  |  2.904717  |  4.978761  |  2.365636 |  4.507364 |  7.544592 | 119.101322| 29.932890 | 107.062500 |
+|    DL    |  1.948025  |  3.190907  |  5.495855  |  2.572099 |  4.900315 |  8.201370 | 118.967914| 25.464199 |  94.746914 |
+|    LB    |  1.832971  |  3.011575  |  5.172703  |  2.405935 |  4.596814 |  7.721183 | 117.944444| 27.738389 | 101.503268 |
+|    OL    |  2.053721  |  3.379012  |  5.872859  |  2.713466 |  5.149279 |  8.620065 | 117.023077| 22.927013 |  86.950147 |
+|    QB    |  1.832539  |  3.017943  |  5.192307  |  2.435299 |  4.637402 |  7.734085 | 119.380165| 27.393415 | 101.314433 |
+|    RB    |  1.767177  |  2.898472  |  4.976106  |  2.377870 |  4.535204 |  7.556855 | 117.123626| 30.069907 | 105.106195 |
+|    TE    |  1.844067  |  3.036289  |  5.233533  |  2.483667 |  4.701044 |  7.820489 | 122.689655| 27.116905 | 102.400000 |
+|    WR    |  1.775830  |  2.911844  |  4.980886  |  2.370128 |  4.497860 |  7.568879 | 120.494361| 29.364390 | 106.899767 |
+
+
+To uncover whether high scool combine test scores have a statistically 
+significant effect on a player's future performance, a two-tailed t-test
+was used on each position and metric grouping between the successful and 
+unsuccessful players. The two tailed tests have the following null hypotheses:
+
+**Null Hypothesis**
+$H_0$: $\mu_1 = \mu_2$ (There is no significant difference between the 
+mean test scores of successful players and unsuccessful players).
+
+**Alternative Hypothesis**
+$H_a$: $\mu_1 \neq \mu_2$ (There is a significant difference between the 
+mean test scores of successful players and unsuccessful players).
+
+
+```{python}
+## The following is commented out due to the size of the output and runtime
+
+# from scipy.stats import ttest_ind
+
+# # Iterate over each unique position
+# for position in combine['Position'].unique():
+#     # Filter data for successful and unsuccessful players for the current position
+#     successful_players_pos = successful_players[successful_players['Position'] == position][numeric_columns].dropna()
+#     unsuccessful_players_pos = unsuccessful_players[unsuccessful_players['Position'] == position][numeric_columns].dropna()
+    
+#     # Convert columns to numeric type and drop non-convertible values
+#     successful_players_pos = successful_players_pos.apply(pd.to_numeric, errors='coerce').dropna()
+#     unsuccessful_players_pos = unsuccessful_players_pos.apply(pd.to_numeric, errors='coerce').dropna()
+    
+#     # Perform t-tests for each numeric column
+#     for column in numeric_columns:
+#         # Perform t-test
+#         t_stat, p_value = ttest_ind(successful_players_pos[column], unsuccessful_players_pos[column], equal_var=False)
+        
+#         # Print results
+#         print(f"Position: {position}, Column: {column}")
+#         print(f"T-statistic: {t_stat}")
+#         print(f"P-value: {p_value}")
+#         print("")
+        
+#         # Check if the difference is statistically significant
+#         if p_value < 0.05:
+#             print("The difference is statistically significant.")
+#         else:
+#             print("The difference is not statistically significant.")
+#         print("\n")
+```
+
+The p-values resulting from each of the 72 hypothesis tests are given in the 
+following heatmap. Unfortunately, the positions QB, TE, and LB had to be dropped 
+due to complications with the sample size. Squares with more red backgrounds have 
+very high p-values, while squares with greener backgrounds have very low p-values. 
+This means that the red groupings can be likely ignored during the scouting process,
+as it is not an indicator of success.
+
+```{python}
+import pandas as pd
+import seaborn as sns
+
+# Data dictionary
+data = {
+    'Position': ['RB', 'OL', 'DL', 'WR', 'DB'],
+    '10': [0.263058544, 0.015908057, 0.112437563, 0.011776909, 0.031190147],
+    '20': [0.256563976, 0.053341917, 0.153893937, 0.050846528, 0.007506925],
+    '40': [0.175873094, 0.082631773, 0.183316958, 0.081739617, 0.004294826],
+    '5-10-5 (10)': [0.05059933, 0.053562364, 0.035655229, 0.081064974, 0.023101482],
+    '5-10-5 (20)': [0.241835479, 0.110190885, 0.018160605, 0.087525887, 0.009063921],
+    '3 Cone Drill': [0.289008859, 0.063712041, 0.310293884, 0.003414336, 0.015756057],
+    'Max Vertical Jump': [0.614199951, 0.105957498, 0.074106854, 0.008727837, 0.005073257],
+    'Vertical Jump': [0.626614448, 0.405807566, 0.137799545, 0.006410804, 0.014728847],
+    'Broad Jump': [0.156670964, 0.039524933, 0.28772801, 6.44E-06, 0.01517466]
+}
+
+# Convert data to DataFrame
+df = pd.DataFrame(data)
+
+# Set Position column as index
+df.set_index('Position', inplace=True)
+
+# Create custom colormap going from red to green
+cmap = sns.diverging_palette(150, 10, as_cmap=True)
+
+# Create heatmap
+plt.figure(figsize=(8, 6))
+heatmap = sns.heatmap(df, cmap=cmap, annot=True, cbar=True, linewidths=0.5)
+
+# Highlight values below 0.05 in darker green color
+for text in heatmap.texts:
+    value = float(text.get_text())
+    if value < 0.05:
+        text.set_color('Yellow')
+
+plt.title('P-values by Position and Metric')
+plt.xlabel('Metric')
+plt.ylabel('Position')
+plt.xticks(rotation=45)
+plt.yticks(rotation=0)
+plt.tight_layout()
+
+# Show plot
+plt.show()
+```
+
+Values with text in yellow had p-values below 0.05, meaning that we could conclude 
+that the differences between successful and unsuccessful players within that position group are 
+significantly different for that combine metric. These significant groupings are
+displayed again in the following heatmap, displaying as the value 1. These groupings
+should be paid close attention to during the scouting process, as they are a significant
+indicator of a player's success at the next levels.
+
+```{python}
+import numpy as np
+import pandas as pd
+import seaborn as sns
+import matplotlib.pyplot as plt
+
+# Data dictionary
+data = {
+    'Position': ['RB', 'OL', 'DL', 'WR', 'DB'],
+    '10': ['Not Significant', 'Significant', 'Not Significant', 'Significant', 'Significant'],
+    '20': ['Not Significant', 'Not Significant', 'Not Significant', 'Not Significant', 'Significant'],
+    '40': ['Not Significant', 'Not Significant', 'Not Significant', 'Not Significant', 'Significant'],
+    '5-10-5 (10)': ['Not Significant', 'Not Significant', 'Significant', 'Not Significant', 'Significant'],
+    '5-10-5 (20)': ['Not Significant', 'Not Significant', 'Significant', 'Not Significant', 'Significant'],
+    '3_Cone': ['Not Significant', 'Not Significant', 'Not Significant', 'Significant', 'Significant'],
+    'VJ_Max': ['Not Significant', 'Not Significant', 'Not Significant', 'Significant', 'Significant'],
+    'VJ_VJ': ['Not Significant', 'Not Significant', 'Not Significant', 'Significant', 'Significant'],
+    'Broad Jump': ['Not Significant', 'Significant', 'Not Significant', 'Significant', 'Significant']
+}
+
+# Convert data to DataFrame
+df = pd.DataFrame(data)
+
+# Set Position column as index
+df.set_index('Position', inplace=True)
+
+# Define colors for the heatmap
+colors = {'Significant': 1, 'Not Significant': 0, 'N/A': np.nan}
+
+# Map colors to DataFrame
+df_mapped = df.replace(colors)
+
+# Create heatmap
+plt.figure(figsize=(8, 6))
+heatmap = sns.heatmap(df_mapped, cmap=['lightgrey', 'green'], annot=True, cbar=False, linewidths=0.5)
+plt.title('Statistical Significance by Position and Metric')
+plt.xlabel('Metric')
+plt.ylabel('Position')
+plt.xticks(rotation=45)
+plt.yticks(rotation=0)
+plt.tight_layout()
+
+# Show plot
+plt.show()
+```
+
+# Discussion
+
+This analysis discovered that the significance of combine metrics vary 
+greatly among positions. Certain tests have predictive power among particular
+positions, but not others. Additionally, some positions' see consistently more
+significance across the majority of tests than others. For example, every average 
+combine test significantly differs between successful and unsuccessful defensive 
+backs, but none of these tests significantly differ between successful and 
+unsuccessful running backs.
+
+The following combine tests should be used in prospect scouting at the following positions:
+
+- 40-yard dash (10-yard split): Offensive Lineman, Wide Receiver, Defensive Back
+- 40-yard dash (20-yard split): Defensive Back
+- 40-yard dash: Defensive Back
+- 20 Yard Shuffle (10-yard split): Defensive Lineman, Defensive Back
+- 20 Yard Shuffle: Defensive Lineman, Defensive Back
+- 3-Cone Drill: Wide Receiver, Defensive Back
+- Vertical Jump (Sum): Wide Receiver, Defensive Back
+- Vertical Jump (Average): Wide Receiver, Defensive Back
+- Broad Jump: Offesnive Lineman, Wide Receiver, Defensive Back
+
+There are some limitations to this study. Due to a small sample size of successful 
+players at certain positions, not all types of players could be considered. Also, players 
+had to be placed into generalized groupings in order to reach an adequate sample size at 
+certain positions. For example, slot cornerbackss, outside cornerbacks, strong safeties, 
+and free safeties are all aggregated into one position. Each of these positions require 
+players of different skill sets and athletic traits. Additionally, only four conferences' 
+postseason awards were taken into account. This meant that if a player was to be named 
+to their All-Conference team in an alternative conference (i.e., SEC, Big 10, Pac-12, ACC) 
+but not invited to the NFL combine, their post high school playing career would have been 
+marked as unsuccessful. Therefore we can assume that there may be some players in the 
+unsuccessful pool who should have been in the successful pool. Luckily, most players who
+are bestowed with these honors in these power conferences are often invited to the combine.
+
+# Conclusion
+
+This analysis effectively selected metrics for scouts to key in on during the recruitment 
+process. Instead of allocating time and personnel resources toward pouring over insignificant
+tests, collegiate teams can identify potenential star players by focusing on these significance
+combine metrics. Although it is unlikely that every player on a roster will be able to stand out
+at each of these test scores, having a higher ratio of player personnel that does fulfill these
+requirements could lead to greater team success.
